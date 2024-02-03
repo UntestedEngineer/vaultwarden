@@ -1,4 +1,6 @@
-**This is a fork of [https://github.com/dani-garcia/vaultwarden](https://github.com/dani-garcia/vaultwarden).  There are no changes other than maintaining the same application at my own cadence.**
+**This is a fork of [https://github.com/dani-garcia/vaultwarden](https://github.com/dani-garcia/vaultwarden).  There are no changes other than maintaining the same application at my own cadence.
+
+Kubernetes examples can be found under the Kubernetes subdirectory.  The PVC referenced assumes Longhorn CSI is deployed, however adapt PV/PVC as necessary.  The referenced secret must be created for database access. **
 
 ### Alternative implementation of the Bitwarden server API written in Rust and compatible with [upstream Bitwarden clients](https://bitwarden.com/download/)*, perfect for self-hosted deployment where running the official resource-heavy service might not be ideal.
 

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vaultwarden
+  namespace: example
+  labels:
+    app.kubernetes.io/instance: vaultwarden
+    app.kubernetes.io/name: vaultwarden
+    app.kubernetes.io/version: v1.30.3
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: vaultwarden
+      app.kubernetes.io/name: vaultwarden
+      app: vaultwarden
+  replicas: 1    
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: vaultwarden
+        app.kubernetes.io/name: vaultwarden
+        app.kubernetes.io/version: v1.30.3
+        app: vaultwarden
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pvc-nfs-vaultwarden
+      containers:
+        - name: vaultwarden
+          image: untestedengineer/vaultwarden:v1.30.3-debian
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "256m"
+          env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: psql-account-vaultwarden
+                key: url
+          - name: SIGNUPS_ALLOWED
+            value: "false"
+          ports:
+          - name: http
+            containerPort: 80
+          volumeMounts:
+            - name: data
+              mountPath: /vw-data/data

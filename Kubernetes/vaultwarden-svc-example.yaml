@@ -1,0 +1,12 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: vaultwarden-svc-tcp
+  namespace: example
+spec:
+  ports:
+  - port: 80
+    targetPort: http
+  selector:
+    app: vaultwarden
+  type: ClusterIP
