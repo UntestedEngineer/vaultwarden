@@ -25,7 +25,7 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: pvc-nfs-vaultwarden
+            claimName: pvc-longhorn-vaultwarden
       containers:
         - name: vaultwarden
           image: untestedengineer/vaultwarden:v1.30.3-debian
