@@ -135,6 +135,18 @@ async fn _refresh_login(data: ConnectData, conn: &mut DbConn) -> JsonResult {
     Ok(Json(result))
 }
 
+#[derive(Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MasterPasswordPolicy {
+    min_complexity: u8,
+    min_length: u32,
+    require_lower: bool,
+    require_upper: bool,
+    require_numbers: bool,
+    require_special: bool,
+    enforce_on_login: bool,
+}
+
 async fn _password_login(
     data: ConnectData,
     user_uuid: &mut Option<String>,
@@ -253,7 +265,7 @@ async fn _password_login(
     let twofactor_token = twofactor_auth(&user, &data, &mut device, ip, conn).await?;
 
     if CONFIG.mail_enabled() && new_device {
-        if let Err(e) = mail::send_new_device_logged_in(&user.email, &ip.ip.to_string(), &now, &device.name).await {
+        if let Err(e) = mail::send_new_device_logged_in(&user.email, &ip.ip.to_string(), &now, &device).await {
             error!("Error sending new device email: {:#?}", e);
 
             if CONFIG.require_device_email() {
@@ -282,6 +294,36 @@ async fn _password_login(
     let (access_token, expires_in) = device.refresh_tokens(&user, scope_vec);
     device.save(conn).await?;
 
+    // Fetch all valid Master Password Policies and merge them into one with all true's and larges numbers as one policy
+    let master_password_policies: Vec<MasterPasswordPolicy> =
+        OrgPolicy::find_accepted_and_confirmed_by_user_and_active_policy(
+            &user.uuid,
+            OrgPolicyType::MasterPassword,
+            conn,
+        )
+        .await
+        .into_iter()
+        .filter_map(|p| serde_json::from_str(&p.data).ok())
+        .collect();
+
+    let master_password_policy = if !master_password_policies.is_empty() {
+        let mut mpp_json = json!(master_password_policies.into_iter().reduce(|acc, policy| {
+            MasterPasswordPolicy {
+                min_complexity: acc.min_complexity.max(policy.min_complexity),
+                min_length: acc.min_length.max(policy.min_length),
+                require_lower: acc.require_lower || policy.require_lower,
+                require_upper: acc.require_upper || policy.require_upper,
+                require_numbers: acc.require_numbers || policy.require_numbers,
+                require_special: acc.require_special || policy.require_special,
+                enforce_on_login: acc.enforce_on_login || policy.enforce_on_login,
+            }
+        }));
+        mpp_json["object"] = json!("masterPasswordPolicy");
+        mpp_json
+    } else {
+        json!({"object": "masterPasswordPolicy"})
+    };
+
     let mut result = json!({
         "access_token": access_token,
         "expires_in": expires_in,
@@ -297,9 +339,7 @@ async fn _password_login(
         "KdfParallelism": user.client_kdf_parallelism,
         "ResetMasterPassword": false, // TODO: Same as above
         "ForcePasswordReset": false,
-        "MasterPasswordPolicy": {
-            "object": "masterPasswordPolicy",
-        },
+        "MasterPasswordPolicy": master_password_policy,
 
         "scope": scope,
         "unofficialServer": true,
@@ -381,7 +421,7 @@ async fn _user_api_key_login(
 
     if CONFIG.mail_enabled() && new_device {
         let now = Utc::now().naive_utc();
-        if let Err(e) = mail::send_new_device_logged_in(&user.email, &ip.ip.to_string(), &now, &device.name).await {
+        if let Err(e) = mail::send_new_device_logged_in(&user.email, &ip.ip.to_string(), &now, &device).await {
             error!("Error sending new device email: {:#?}", e);
 
             if CONFIG.require_device_email() {
@@ -495,7 +535,7 @@ async fn twofactor_auth(
         return Ok(None);
     }
 
-    TwoFactorIncomplete::mark_incomplete(&user.uuid, &device.uuid, &device.name, ip, conn).await?;
+    TwoFactorIncomplete::mark_incomplete(&user.uuid, &device.uuid, &device.name, device.atype, ip, conn).await?;
 
     let twofactor_ids: Vec<_> = twofactors.iter().map(|tf| tf.atype).collect();
     let selected_id = data.two_factor_provider.unwrap_or(twofactor_ids[0]); // If we aren't given a two factor provider, assume the first one

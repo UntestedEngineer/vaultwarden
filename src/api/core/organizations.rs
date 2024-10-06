@@ -509,7 +509,7 @@ async fn post_organization_collection_update(
         CollectionUser::save(&org_user.user_uuid, col_id, user.read_only, user.hide_passwords, &mut conn).await?;
     }
 
-    Ok(Json(collection.to_json()))
+    Ok(Json(collection.to_json_details(&headers.user.uuid, None, &mut conn).await))
 }
 
 #[delete("/organizations/<org_id>/collections/<col_id>/user/<org_user_id>")]
@@ -956,8 +956,7 @@ async fn send_invite(org_id: &str, data: Json<InviteData>, headers: AdminHeaders
             };
 
             mail::send_invite(
-                &email,
-                &user.uuid,
+                &user,
                 Some(String::from(org_id)),
                 Some(new_user.uuid),
                 &org_name,
@@ -1033,8 +1032,7 @@ async fn _reinvite_user(org_id: &str, user_org: &str, invited_by_email: &str, co
 
     if CONFIG.mail_enabled() {
         mail::send_invite(
-            &user.email,
-            &user.uuid,
+            &user,
             Some(org_id.to_string()),
             Some(user_org.uuid),
             &org_name,
@@ -1598,7 +1596,7 @@ async fn post_org_import(
     // Bitwarden does not process the import if there is one item invalid.
     // Since we check for the size of the encrypted note length, we need to do that here to pre-validate it.
     // TODO: See if we can optimize the whole cipher adding/importing and prevent duplicate code and checks.
-    Cipher::validate_notes(&data.ciphers)?;
+    Cipher::validate_cipher_data(&data.ciphers)?;
 
     let mut collections = Vec::new();
     for coll in data.collections {
@@ -1722,7 +1720,7 @@ async fn list_policies_token(org_id: &str, token: &str, mut conn: DbConn) -> Jso
         return Ok(Json(json!({})));
     }
 
-    let invite = crate::auth::decode_invite(token)?;
+    let invite = decode_invite(token)?;
 
     let invite_org_id = match invite.org_id {
         Some(invite_org_id) => invite_org_id,
@@ -1781,6 +1779,38 @@ async fn put_policy(
         Some(pt) => pt,
         None => err!("Invalid or unsupported policy type"),
     };
+
+    // Bitwarden only allows the Reset Password policy when Single Org policy is enabled
+    // Vaultwarden encouraged to use multiple orgs instead of groups because groups were not available in the past
+    // Now that groups are available we can enforce this option when wanted.
+    // We put this behind a config option to prevent breaking current installation.
+    // Maybe we want to enable this by default in the future, but currently it is disabled by default.
+    if CONFIG.enforce_single_org_with_reset_pw_policy() {
+        if pol_type_enum == OrgPolicyType::ResetPassword && data.enabled {
+            let single_org_policy_enabled =
+                match OrgPolicy::find_by_org_and_type(org_id, OrgPolicyType::SingleOrg, &mut conn).await {
+                    Some(p) => p.enabled,
+                    None => false,
+                };
+
+            if !single_org_policy_enabled {
+                err!("Single Organization policy is not enabled. It is mandatory for this policy to be enabled.")
+            }
+        }
+
+        // Also prevent the Single Org Policy to be disabled if the Reset Password policy is enabled
+        if pol_type_enum == OrgPolicyType::SingleOrg && !data.enabled {
+            let reset_pw_policy_enabled =
+                match OrgPolicy::find_by_org_and_type(org_id, OrgPolicyType::ResetPassword, &mut conn).await {
+                    Some(p) => p.enabled,
+                    None => false,
+                };
+
+            if reset_pw_policy_enabled {
+                err!("Account recovery policy is enabled. It is not allowed to disable this policy.")
+            }
+        }
+    }
 
     // When enabling the TwoFactorAuthentication policy, revoke all members that do not have 2FA
     if pol_type_enum == OrgPolicyType::TwoFactorAuthentication && data.enabled {
@@ -2005,8 +2035,7 @@ async fn import(org_id: &str, data: Json<OrgImportData>, headers: Headers, mut c
                     };
 
                     mail::send_invite(
-                        &user_data.email,
-                        &user.uuid,
+                        &user,
                         Some(String::from(org_id)),
                         Some(new_org_user.uuid),
                         &org_name,
@@ -2276,13 +2305,14 @@ async fn _restore_organization_user(
 }
 
 #[get("/organizations/<org_id>/groups")]
-async fn get_groups(org_id: &str, _headers: ManagerHeadersLoose, mut conn: DbConn) -> JsonResult {
+async fn get_groups(org_id: &str, headers: ManagerHeadersLoose, mut conn: DbConn) -> JsonResult {
     let groups: Vec<Value> = if CONFIG.org_groups_enabled() {
         // Group::find_by_organization(&org_id, &mut conn).await.iter().map(Group::to_json).collect::<Value>()
         let groups = Group::find_by_organization(org_id, &mut conn).await;
         let mut groups_json = Vec::with_capacity(groups.len());
+
         for g in groups {
-            groups_json.push(g.to_json_details(&mut conn).await)
+            groups_json.push(g.to_json_details(&headers.org_user.atype, &mut conn).await)
         }
         groups_json
     } else {
@@ -2470,7 +2500,7 @@ async fn add_update_group(
 }
 
 #[get("/organizations/<_org_id>/groups/<group_id>/details")]
-async fn get_group_details(_org_id: &str, group_id: &str, _headers: AdminHeaders, mut conn: DbConn) -> JsonResult {
+async fn get_group_details(_org_id: &str, group_id: &str, headers: AdminHeaders, mut conn: DbConn) -> JsonResult {
     if !CONFIG.org_groups_enabled() {
         err!("Group support is disabled");
     }
@@ -2480,7 +2510,7 @@ async fn get_group_details(_org_id: &str, group_id: &str, _headers: AdminHeaders
         _ => err!("Group could not be found!"),
     };
 
-    Ok(Json(group.to_json_details(&mut conn).await))
+    Ok(Json(group.to_json_details(&(headers.org_user_type as i32), &mut conn).await))
 }
 
 #[post("/organizations/<org_id>/groups/<group_id>/delete")]
