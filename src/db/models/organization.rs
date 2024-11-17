@@ -538,6 +538,13 @@ impl UserOrganization {
             "accessAll": self.access_all,
             "twoFactorEnabled": twofactor_enabled,
             "resetPasswordEnrolled": self.reset_password_key.is_some(),
+            "hasMasterPassword": !user.password_hash.is_empty(),
+
+            "permissions": permissions,
+
+            "ssoBound": false, // Not supported
+            "usesKeyConnector": false, // Not supported
+            "accessSecretsManager": false, // Not supported (Not AGPLv3 Licensed)
 
             "object": "organizationUserUserDetails",
         })
