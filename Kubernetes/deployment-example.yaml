@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/instance: vaultwarden
     app.kubernetes.io/name: vaultwarden
-    app.kubernetes.io/version: v1.32.7
+    app.kubernetes.io/version: v1.33.0
 spec:
   selector:
     matchLabels:
@@ -19,7 +19,7 @@ spec:
       labels:
         app.kubernetes.io/instance: vaultwarden
         app.kubernetes.io/name: vaultwarden
-        app.kubernetes.io/version: v1.32.7
+        app.kubernetes.io/version: v1.33.0
         app: vaultwarden
     spec:
       volumes:
@@ -28,7 +28,7 @@ spec:
             claimName: pvc-longhorn-vaultwarden
       containers:
         - name: vaultwarden
-          image: untestedengineer/vaultwarden:v1.32.7-debian
+          image: untestedengineer/vaultwarden:v1.33.0-debian
           resources:
             limits:
               memory: "512Mi"
