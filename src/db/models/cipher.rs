@@ -85,7 +85,7 @@ impl Cipher {
         let mut validation_errors = serde_json::Map::new();
         let max_note_size = CONFIG._max_note_size();
         let max_note_size_msg =
-            format!("The field Notes exceeds the maximum encrypted value length of {} characters.", &max_note_size);
+            format!("The field Notes exceeds the maximum encrypted value length of {max_note_size} characters.");
         for (index, cipher) in cipher_data.iter().enumerate() {
             // Validate the note size and if it is exceeded return a warning
             if let Some(note) = &cipher.notes {
@@ -141,18 +141,28 @@ impl Cipher {
         cipher_sync_data: Option<&CipherSyncData>,
         sync_type: CipherSyncType,
         conn: &mut DbConn,
-    ) -> Value {
+    ) -> Result<Value, crate::Error> {
         use crate::util::{format_date, validate_and_format_date};
 
         let mut attachments_json: Value = Value::Null;
         if let Some(cipher_sync_data) = cipher_sync_data {
             if let Some(attachments) = cipher_sync_data.cipher_attachments.get(&self.uuid) {
-                attachments_json = attachments.iter().map(|c| c.to_json(host)).collect();
+                if !attachments.is_empty() {
+                    let mut attachments_json_vec = vec![];
+                    for attachment in attachments {
+                        attachments_json_vec.push(attachment.to_json(host).await?);
+                    }
+                    attachments_json = Value::Array(attachments_json_vec);
+                }
             }
         } else {
             let attachments = Attachment::find_by_cipher(&self.uuid, conn).await;
             if !attachments.is_empty() {
-                attachments_json = attachments.iter().map(|c| c.to_json(host)).collect()
+                let mut attachments_json_vec = vec![];
+                for attachment in attachments {
+                    attachments_json_vec.push(attachment.to_json(host).await?);
+                }
+                attachments_json = Value::Array(attachments_json_vec);
             }
         }
 
@@ -318,7 +328,7 @@ impl Cipher {
         // supports the "cipherDetails" type, though it seems like the
         // Bitwarden clients will ignore extra fields.
         //
-        // Ref: https://github.com/bitwarden/server/blob/master/src/Core/Models/Api/Response/CipherResponseModel.cs
+        // Ref: https://github.com/bitwarden/server/blob/9ebe16587175b1c0e9208f84397bb75d0d595510/src/Api/Vault/Models/Response/CipherResponseModel.cs#L14
         let mut json_object = json!({
             "object": "cipherDetails",
             "id": self.uuid,
@@ -372,6 +382,11 @@ impl Cipher {
             // the "Read Only" or "Hide Passwords" restrictions for the user.
             json_object["edit"] = json!(!read_only);
             json_object["viewPassword"] = json!(!hide_passwords);
+            // The new key used by clients since v2025.6.0
+            json_object["permissions"] = json!({
+                "delete": !read_only,
+                "restore": !read_only,
+            });
         }
 
         let key = match self.atype {
@@ -384,7 +399,7 @@ impl Cipher {
         };
 
         json_object[key] = type_data_json;
-        json_object
+        Ok(json_object)
     }
 
     pub async fn update_users_revision(&self, conn: &mut DbConn) -> Vec<UserId> {
@@ -594,22 +609,23 @@ impl Cipher {
             let mut rows: Vec<(bool, bool, bool)> = Vec::new();
             if let Some(collections) = cipher_sync_data.cipher_collections.get(&self.uuid) {
                 for collection in collections {
-                    //User permissions
+                    // User permissions
                     if let Some(cu) = cipher_sync_data.user_collections.get(collection) {
                         rows.push((cu.read_only, cu.hide_passwords, cu.manage));
-                    }
-
-                    //Group permissions
-                    if let Some(cg) = cipher_sync_data.user_collections_groups.get(collection) {
+                    // Group permissions
+                    } else if let Some(cg) = cipher_sync_data.user_collections_groups.get(collection) {
                         rows.push((cg.read_only, cg.hide_passwords, cg.manage));
                     }
                 }
             }
             rows
         } else {
-            let mut access_flags = self.get_user_collections_access_flags(user_uuid, conn).await;
-            access_flags.append(&mut self.get_group_collections_access_flags(user_uuid, conn).await);
-            access_flags
+            let user_permissions = self.get_user_collections_access_flags(user_uuid, conn).await;
+            if !user_permissions.is_empty() {
+                user_permissions
+            } else {
+                self.get_group_collections_access_flags(user_uuid, conn).await
+            }
         };
 
         if rows.is_empty() {
@@ -618,6 +634,9 @@ impl Cipher {
         }
 
         // A cipher can be in multiple collections with inconsistent access flags.
+        // Also, user permission overrule group permissions
+        // and only user permissions are returned by the code above.
+        //
         // For example, a cipher could be in one collection where the user has
         // read-only access, but also in another collection where the user has
         // read/write access. For a flag to be in effect for a cipher, upstream
@@ -626,13 +645,15 @@ impl Cipher {
         // and `hide_passwords` columns. This could ideally be done as part of the
         // query, but Diesel doesn't support a min() or bool_and() function on
         // booleans and this behavior isn't portable anyway.
+        //
+        // The only exception is for the `manage` flag, that needs a boolean OR!
         let mut read_only = true;
         let mut hide_passwords = true;
         let mut manage = false;
         for (ro, hp, mn) in rows.iter() {
             read_only &= ro;
             hide_passwords &= hp;
-            manage &= mn;
+            manage |= mn;
         }
 
         Some((read_only, hide_passwords, manage))
