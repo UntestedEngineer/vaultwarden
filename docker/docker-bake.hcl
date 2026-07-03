@@ -14,7 +14,7 @@ variable "DB" {
 
 // The repository this build was triggered from
 variable "SOURCE_REPOSITORY_URL" {
-  default = null
+  default = "https://github.com/UntestedEngineer/vaultwarden"
 }
 
 // The commit hash of the current commit this build was triggered on
@@ -26,7 +26,7 @@ variable "SOURCE_COMMIT" {
 // Typically the current exact tag of this commit,
 // else the last tag and the first 8 characters of the source commit
 variable "SOURCE_VERSION" {
-  default = null
+  default = "v1.35.5"
 }
 
 // This can be used to overwrite SOURCE_VERSION
@@ -38,21 +38,21 @@ variable "VW_VERSION" {
 // The base tag(s) to use
 // This can be a comma separated value like "testing,1.29.2"
 variable "BASE_TAGS" {
-  default = "testing"
+  default = "latest,v1.35.5"
 }
 
 // Which container registries should be used for the tagging
 // This can be a comma separated value
 // Use a full URI like `ghcr.io/dani-garcia/vaultwarden,docker.io/vaultwarden/server`
 variable "CONTAINER_REGISTRIES" {
-  default = "vaultwarden/server"
+  default = "untestedengineer/vaultwarden"
 }
 
 
 // ==== Baking Groups ====
 
 group "default" {
-  targets = ["debian"]
+  targets = ["debian-multi", "alpine-multi"]
 }
 
 
@@ -95,8 +95,8 @@ target "debian" {
 // This is mainly used by GitHub Actions to build and push new containers
 target "debian-multi" {
   inherits = ["debian"]
-  platforms = ["linux/amd64", "linux/arm64", "linux/arm/v7", "linux/arm/v6"]
-  tags = generate_tags("", "")
+  platforms = ["linux/amd64", "linux/arm64"]
+  tags = generate_tags("-debian", "")
   output = [join(",", flatten([["type=registry"], image_index_annotations()]))]
 }
 
@@ -170,7 +170,7 @@ target "alpine" {
 // This is mainly used by GitHub Actions to build and push new containers
 target "alpine-multi" {
   inherits = ["alpine"]
-  platforms = ["linux/amd64", "linux/arm64", "linux/arm/v7", "linux/arm/v6"]
+  platforms = ["linux/amd64", "linux/arm64"]
   tags = generate_tags("-alpine", "")
   output = [join(",", flatten([["type=registry"], image_index_annotations()]))]
 }
@@ -243,7 +243,7 @@ function "generate_tags" {
       [for base_tag in get_base_tags() :
         concat(
           # If the base_tag contains latest, and the suffix contains `-alpine` add a `:alpine` tag too
-          base_tag == "latest" ? suffix == "-alpine" ? ["${registry}:alpine${platform}"] : [] : [],
+        //   base_tag == "latest" ? suffix == "-alpine" ? ["${registry}:alpine${platform}"] : [] : [],
           # The default tagging strategy
           ["${registry}:${base_tag}${suffix}${platform}"]
         )
