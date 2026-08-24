@@ -26,7 +26,7 @@ variable "SOURCE_COMMIT" {
 // Typically the current exact tag of this commit,
 // else the last tag and the first 8 characters of the source commit
 variable "SOURCE_VERSION" {
-  default = "v1.37.1"
+  default = "v1.37.2"
 }
 
 // This can be used to overwrite SOURCE_VERSION
@@ -38,7 +38,7 @@ variable "VW_VERSION" {
 // The base tag(s) to use
 // This can be a comma separated value like "testing,1.29.2"
 variable "BASE_TAGS" {
-  default = "latest,v1.37.1"
+  default = "latest,v1.37.2"
 }
 
 // Which container registries should be used for the tagging
